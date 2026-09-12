@@ -1,14 +1,14 @@
 import json
 import os
+import ssl
 import time
 from flask import Flask, jsonify, request
 from websocket import create_connection
 
 app = Flask(__name__)
 
-# Alterado para WebSocket sem SSL (Porta HTTP 80 / 4010)
-# A Achex roteia as mensagens entre jordan@1107 e arduino@1107 normalmente
-ACHEX_WS_URL = "ws://ws.achex.ca:80/"
+# URL idêntica à do código JS
+ACHEX_WSS_URL = "wss://ws.achex.ca/"
 USER_ID = "jordan@1107"
 USER_PASS = "142536"
 TARGET_ID = "arduino@1107"
@@ -18,28 +18,51 @@ TARGET_ID = "arduino@1107"
 def enviar_comando_websocket():
   ws = None
   try:
-    # 1. Trata o parâmetro 'comando' recebido via GET/POST
+    # 1. Trata o parâmetro 'comando' recebido
     raw_comando = request.args.get("comando", default="l1=1")
     valor_comando = raw_comando.replace("-", "=").replace("AND", "&")
 
-    # 2. Conecta ao WebSocket WS padrão (porta 80)
-    ws = create_connection(ACHEX_WS_URL, timeout=5)
+    # 2. Conecta ao WebSocket simetrizando o handshake do navegador
+    ssl_context = ssl.create_default_context()
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl.CERT_NONE
 
-    # 3. Autentica a API Python (setID)
+    ws = create_connection(
+        ACHEX_WSS_URL,
+        timeout=10,
+        sslopt={"cert_reqs": ssl.CERT_NONE, "check_hostname": False},
+        header=["Origin: https://ws.achex.ca"],
+    )
+
+    # 3. Envia o payload de autenticação exatamente como no JS (socket.send)
     auth_payload = json.dumps({"setID": USER_ID, "passwd": USER_PASS})
     ws.send(auth_payload)
 
-    # Pausa para o servidor Achex registrar o socket do Python
-    time.sleep(0.5)
+    # 4. Aguarda a resposta do servidor ("auth": "ok") assim como no eventListener('message')
+    autenticado = False
+    inicio = time.time()
 
-    # 4. Envia a mensagem direcionada ao ESP8266 (to: "arduino@1107")
+    while time.time() - inicio < 5:  # Timeout de 5s para autenticar
+      resposta_raw = ws.recv()
+      if resposta_raw:
+        resposta = json.loads(resposta_raw)
+        # Verifica se o servidor retornou "auth": "ok"
+        if (
+            resposta.get("auth")
+            and str(resposta.get("auth")).lower() == "ok"
+        ):
+          autenticado = True
+          break
+
+    if not autenticado:
+      raise Exception("Servidor Achex não confirmou a autenticação (auth != ok)")
+
+    # 5. Envia o comando direcionado ao ESP8266 após a confirmação
     control_payload = json.dumps({"to": TARGET_ID, "value": valor_comando})
     ws.send(control_payload)
 
-    # 5. Aguarda 1 segundo para garantir a entrega antes de fechar
-    time.sleep(1)
-
-    # 6. Encerra a conexão de forma limpa
+    # 6. Aguarda brevemente a entrega e fecha a conexão
+    time.sleep(0.5)
     ws.close()
 
     return (
@@ -48,9 +71,7 @@ def enviar_comando_websocket():
             "comando_enviado": valor_comando,
             "destinatario": TARGET_ID,
             "remetente": USER_ID,
-            "message": (
-                "Comando enviado com sucesso ao servidor Achex via WS!"
-            ),
+            "message": "Comando autenticado e enviado via WSS com sucesso!",
         }),
         200,
     )
