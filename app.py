@@ -1,14 +1,14 @@
 import json
 import os
-import ssl
 import time
 from flask import Flask, jsonify, request
 from websocket import create_connection
 
 app = Flask(__name__)
 
-# Configurações do WebSocket WSS da Achex (espelhado do ESP8266)
-ACHEX_WSS_URL = "wss://ws.achex.ca:443/"
+# Alterado para WebSocket sem SSL (Porta HTTP 80 / 4010)
+# A Achex roteia as mensagens entre jordan@1107 e arduino@1107 normalmente
+ACHEX_WS_URL = "ws://ws.achex.ca:80/"
 USER_ID = "jordan@1107"
 USER_PASS = "142536"
 TARGET_ID = "arduino@1107"
@@ -22,28 +22,24 @@ def enviar_comando_websocket():
     raw_comando = request.args.get("comando", default="l1=1")
     valor_comando = raw_comando.replace("-", "=").replace("AND", "&")
 
-    # 2. Conecta ao WebSocket Seguro (WSS) ignorando a verificação estrita de SSL
-    ws = create_connection(
-        ACHEX_WSS_URL,
-        timeout=5,
-        sslopt={"cert_reqs": ssl.CERT_NONE, "check_hostname": False},
-    )
+    # 2. Conecta ao WebSocket WS padrão (porta 80)
+    ws = create_connection(ACHEX_WS_URL, timeout=5)
 
-    # 3. Autentica a API Python no servidor Achex (setID)
+    # 3. Autentica a API Python (setID)
     auth_payload = json.dumps({"setID": USER_ID, "passwd": USER_PASS})
     ws.send(auth_payload)
 
-    # Pausa para o servidor registrar o setID
+    # Pausa para o servidor Achex registrar o socket do Python
     time.sleep(0.5)
 
     # 4. Envia a mensagem direcionada ao ESP8266 (to: "arduino@1107")
     control_payload = json.dumps({"to": TARGET_ID, "value": valor_comando})
     ws.send(control_payload)
 
-    # 5. Aguarda 1 segundo antes de encerrar
+    # 5. Aguarda 1 segundo para garantir a entrega antes de fechar
     time.sleep(1)
 
-    # 6. Fecha o WebSocket
+    # 6. Encerra a conexão de forma limpa
     ws.close()
 
     return (
@@ -52,7 +48,9 @@ def enviar_comando_websocket():
             "comando_enviado": valor_comando,
             "destinatario": TARGET_ID,
             "remetente": USER_ID,
-            "message": "Comando enviado via WSS com sucesso!",
+            "message": (
+                "Comando enviado com sucesso ao servidor Achex via WS!"
+            ),
         }),
         200,
     )
