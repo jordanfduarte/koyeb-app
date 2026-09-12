@@ -1,14 +1,13 @@
 import json
 import os
-import ssl
 import time
 from flask import Flask, jsonify, request
 import websocket
 
 app = Flask(__name__)
 
-# URL do WebSocket seguro na porta 443
-WS_URL = "wss://ws.achex.ca:443"
+# URL utilizando a porta 80 nativa para WebSocket HTTP não-criptografado (ws://)
+WS_URL = "ws://ws.achex.ca:80"
 
 
 @app.route("/ligar-luz", methods=["GET", "POST"])
@@ -18,12 +17,8 @@ def enviar_comando_websocket():
     raw_comando = request.args.get("comando", default="l1=1")
     valor_comando = raw_comando.replace("-", "=").replace("AND", "&")
 
-    # 2. Conecta via WebSocket Seguro (wss://) com SSL configurado
-    ws = websocket.create_connection(
-        WS_URL,
-        timeout=5,
-        sslopt={"cert_reqs": ssl.CERT_NONE},  # Ignora erros de certificado SSL se houver
-    )
+    # 2. Conecta ao WebSocket puro (ws://) sem passar camada SSL
+    ws = websocket.create_connection(WS_URL, timeout=5)
 
     # 3. Envia o primeiro JSON (Autenticação)
     cmd_auth = {"setID": "jordan@1107", "passwd": "142536"}
@@ -48,7 +43,7 @@ def enviar_comando_websocket():
             "status": "success",
             "comando_enviado": valor_comando,
             "message": (
-                "Comando enviado via WebSocket (WSS:443) e conexão encerrada com"
+                "Comando enviado via WebSocket (ws://ws.achex.ca:80) com"
                 " sucesso!"
             ),
         }),
