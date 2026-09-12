@@ -1,5 +1,6 @@
 import json
 import os
+import ssl
 import time
 from flask import Flask, jsonify, request
 from websocket import create_connection
@@ -21,24 +22,28 @@ def enviar_comando_websocket():
     raw_comando = request.args.get("comando", default="l1=1")
     valor_comando = raw_comando.replace("-", "=").replace("AND", "&")
 
-    # 2. Conecta ao WebSocket Seguro (WSS) na porta 443
-    ws = create_connection(ACHEX_WSS_URL, timeout=5)
+    # 2. Conecta ao WebSocket Seguro (WSS) ignorando a verificação estrita de SSL
+    ws = create_connection(
+        ACHEX_WSS_URL,
+        timeout=5,
+        sslopt={"cert_reqs": ssl.CERT_NONE, "check_hostname": False},
+    )
 
     # 3. Autentica a API Python no servidor Achex (setID)
     auth_payload = json.dumps({"setID": USER_ID, "passwd": USER_PASS})
     ws.send(auth_payload)
 
-    # Pequena pausa para garantir a autenticação no servidor
+    # Pausa para o servidor registrar o setID
     time.sleep(0.5)
 
     # 4. Envia a mensagem direcionada ao ESP8266 (to: "arduino@1107")
     control_payload = json.dumps({"to": TARGET_ID, "value": valor_comando})
     ws.send(control_payload)
 
-    # 5. Aguarda 1 segundo antes de encerrar a conexão
+    # 5. Aguarda 1 segundo antes de encerrar
     time.sleep(1)
 
-    # 6. Fecha o WebSocket de forma limpa
+    # 6. Fecha o WebSocket
     ws.close()
 
     return (
@@ -47,7 +52,7 @@ def enviar_comando_websocket():
             "comando_enviado": valor_comando,
             "destinatario": TARGET_ID,
             "remetente": USER_ID,
-            "message": "Comando enviado via WebSocket WSS com sucesso!",
+            "message": "Comando enviado via WSS com sucesso!",
         }),
         200,
     )
