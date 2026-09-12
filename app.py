@@ -1,52 +1,54 @@
 import json
 import os
+import ssl
 import time
 from flask import Flask, jsonify, request
 import websocket
 
 app = Flask(__name__)
 
-# Configurações do WebSocket Achex
-WS_URL = "ws://ws.achex.ca:4010"
+# URL do WebSocket seguro na porta 443
+WS_URL = "wss://ws.achex.ca:443"
 
 
 @app.route("/ligar-luz", methods=["GET", "POST"])
 def enviar_comando_websocket():
   try:
-    # 1. Captura o parâmetro 'comando' enviado via GET na URL
-    # Se não for passado nada na URL, assume 'l1-1' como padrão
-    # 1. Captura o parâmetro 'comando' e aplica as substituições (.replace)
-    # Primeiro troca '-' por '=', depois troca 'AND' por '&'
+    # 1. Captura parâmetro 'comando' e faz as substituições (- por = / AND por &)
     raw_comando = request.args.get("comando", default="l1=1")
     valor_comando = raw_comando.replace("-", "=").replace("AND", "&")
 
-    # 2. Abre a conexão WebSocket (timeout de 5 segundos)
-    ws = websocket.create_connection(WS_URL, timeout=5)
+    # 2. Conecta via WebSocket Seguro (wss://) com SSL configurado
+    ws = websocket.create_connection(
+        WS_URL,
+        timeout=5,
+        sslopt={"cert_reqs": ssl.CERT_NONE},  # Ignora erros de certificado SSL se houver
+    )
 
-    # 3. Prepara e envia o primeiro JSON (Autenticação/setID)
+    # 3. Envia o primeiro JSON (Autenticação)
     cmd_auth = {"setID": "jordan@1107", "passwd": "142536"}
     ws.send(json.dumps(cmd_auth))
 
-    # 4. Espera 1 segundo
+    # 4. Aguarda 1 segundo
     time.sleep(1)
 
-    # 5. Monta o segundo JSON usando o valor recebido no GET
+    # 5. Envia o segundo JSON (Comando para o Arduino)
     cmd_control = {"to": "arduino@1107", "value": valor_comando}
     ws.send(json.dumps(cmd_control))
 
-    # 6. Espera mais 2 segundos
+    # 6. Aguarda 2 segundos
     time.sleep(2)
 
-    # 7. Encerra a conexão WebSocket
+    # 7. Encerra a conexão
     ws.close()
 
-    # 8. Retorna HTTP 200 Sucesso para o cliente
+    # 8. Retorna HTTP 200 OK
     return (
         jsonify({
             "status": "success",
             "comando_enviado": valor_comando,
             "message": (
-                "Comando enviado via WebSocket e conexão encerrada com"
+                "Comando enviado via WebSocket (WSS:443) e conexão encerrada com"
                 " sucesso!"
             ),
         }),
@@ -54,7 +56,7 @@ def enviar_comando_websocket():
     )
 
   except Exception as e:
-    # Retorna erro HTTP 500 caso ocorra falha na conexão ou timeout
+    # Retorna erro HTTP 500 caso haja falha
     return jsonify({"status": "error", "message": str(e)}), 500
 
 
