@@ -13,6 +13,19 @@ USER_PASS = "142536"
 TARGET_ID = "arduino@1107"
 
 
+def criar_contexto_ssl_permissivo():
+  """Cria um contexto SSL que aceita ciphers legados da Achex no OpenSSL moderno do Python."""
+  ctx = ssl.create_default_context()
+  ctx.check_hostname = False
+  ctx.verify_mode = ssl.CERT_NONE
+  # Permite ciphers legados usados por servidores antigos
+  try:
+    ctx.set_ciphers("DEFAULT@SECLEVEL=1")
+  except Exception:
+    ctx.set_ciphers("ALL")
+  return ctx
+
+
 @app.route("/ligar-luz", methods=["GET", "POST"])
 def enviar_comando_websocket():
   ws = None
@@ -21,19 +34,21 @@ def enviar_comando_websocket():
     raw_comando = request.args.get("comando", default="l1=1")
     valor_comando = raw_comando.replace("-", "=").replace("AND", "&")
 
-    # 2. Conecta ao WebSocket com cabeçalhos de navegador
+    # 2. Conecta ao WebSocket passando o contexto SSL customizado
+    ssl_context = criar_contexto_ssl_permissivo()
+
     ws = create_connection(
         ACHEX_WSS_URL,
         timeout=8,
-        sslopt={"cert_reqs": ssl.CERT_NONE, "check_hostname": False},
+        sslopt={"context": ssl_context},
         header=["Origin: https://ws.achex.ca"],
     )
 
-    # 3. Autentica (setID)
+    # 3. Autenticação (setID)
     auth_payload = json.dumps({"setID": USER_ID, "passwd": USER_PASS})
     ws.send(auth_payload)
 
-    # 4. Aguarda a confirmação de autenticação ("auth": "ok")
+    # 4. Aguarda o 'auth: ok' do servidor Achex
     autenticado = False
     inicio_auth = time.time()
 
@@ -55,29 +70,24 @@ def enviar_comando_websocket():
     control_payload = json.dumps({"to": TARGET_ID, "value": valor_comando})
     ws.send(control_payload)
 
-    # 6. Aguarda o retorno transmitido pelo ESP8266 (ex: "OK" ou status)
+    # 6. Aguarda o retorno do ESP8266
     resposta_esp = None
     inicio_espera = time.time()
-    tempo_maximo_resposta = 5  # Segundos tolerados até o ESP responder
 
-    while time.time() - inicio_espera < tempo_maximo_resposta:
+    while time.time() - inicio_espera < 5:
       try:
         msg_raw = ws.recv()
         if msg_raw:
           dados = json.loads(msg_raw)
-
-          # Filtra se a mensagem veio do ESP8266 ou contém campo "value"
           if "value" in dados:
             resposta_esp = dados.get("value")
             break
       except Exception:
-        # Timeout de leitura individual atingido
         break
 
-    # 7. Encerra a conexão de forma limpa
+    # 7. Encerra a conexão
     ws.close()
 
-    # 8. Retorna o resultado completo para quem chamou a rota (Make/HTTP Client)
     if resposta_esp:
       return (
           jsonify({
